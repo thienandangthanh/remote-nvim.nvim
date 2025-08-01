@@ -114,6 +114,7 @@ describe("Provider", function()
       assert.are.same({
         provider = "local",
         host = provider.host,
+        is_docker_container = false,
         arch = "x86_64",
         neovim_install_method = "binary",
         connection_options = provider.conn_opts,
