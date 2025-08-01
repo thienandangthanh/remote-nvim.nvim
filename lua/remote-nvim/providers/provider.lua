@@ -1,7 +1,7 @@
 ---@alias provider_type "ssh"|"devpod"|"local"
 ---@alias os_type "macOS"|"Windows"|"Linux"
 ---@alias arch_type "x86_64"|"arm64"
----@alias neovim_install_method "binary"|"source"|"system"
+---@alias neovim_install_method "binary"|"tarball"|"source"|"system"
 
 ---@class remote-nvim.providers.WorkspaceConfig
 ---@field provider provider_type? Which provider is responsible for managing this workspace
@@ -17,6 +17,7 @@
 ---@field client_auto_start boolean? Flag indicating if the client should be auto started or not
 ---@field offline_mode boolean? Should we operate in offline mode
 ---@field devpod_source_opts remote-nvim.providers.DevpodSourceOpts? Devpod related source options
+---@field is_docker_container boolean? Flag indicating if the remote is running in a Docker container
 
 ---@class remote-nvim.providers.Provider: remote-nvim.Object
 ---@field host string Host name
@@ -175,6 +176,18 @@ function Provider:_setup_workspace_variables()
       self._host_config.neovim_install_method = "source"
       prompt_title = "Binary release not available. Choose Neovim version to install"
     end
+
+    -- Check if remote is running in Docker container and override install method
+    local is_docker = self:_is_remote_docker_container()
+    if is_docker and self._host_config.neovim_install_method == "binary" then
+      self._host_config.neovim_install_method = "tarball"
+      prompt_title = "Docker container detected. Choose Neovim version to install (using tarball)"
+      self.logger.info("Overriding install method from 'binary' to 'tarball' due to Docker container detection")
+    end
+
+    -- Store Docker detection result for future reference
+    self._host_config.is_docker_container = is_docker
+
     self._remote_neovim_install_method = self._host_config.neovim_install_method
     self._host_config.neovim_version = self:_get_remote_neovim_version_preference(prompt_title)
 
@@ -186,6 +199,7 @@ function Provider:_setup_workspace_variables()
     self._config_provider:update_workspace_config(self.unique_host_id, {
       neovim_install_method = self._host_config.neovim_install_method,
       neovim_version = self._host_config.neovim_version,
+      is_docker_container = self._host_config.is_docker_container,
     })
   end
   self._remote_neovim_version = self._host_config.neovim_version
@@ -356,6 +370,33 @@ function Provider:_get_remote_os_and_arch()
   end
 
   return self._remote_os, self._remote_arch
+end
+
+---@private
+---Detect if the remote host is running in a Docker container
+---@return boolean is_docker True if running in Docker container
+function Provider:_is_remote_docker_container()
+  -- Check multiple indicators of Docker container environment
+  local docker_checks = {
+    "test -f /.dockerenv", -- Standard Docker indicator file
+    'test -n "${container}"', -- Container environment variable
+    "grep -q 'docker\\|lxc' /proc/1/cgroup 2>/dev/null", -- Process cgroup check
+    "test -f /proc/self/mountinfo && grep -q 'docker' /proc/self/mountinfo 2>/dev/null", -- Mount info check
+  }
+
+  local check_cmd = table.concat(docker_checks, " || ")
+  local full_cmd = ("(%s) && echo 'DOCKER_DETECTED' || echo 'NOT_DOCKER'"):format(check_cmd)
+
+  self:run_command(full_cmd, "Checking if remote environment is a Docker container")
+  local cmd_output = self.executor:job_stdout()
+  local result = cmd_output[#cmd_output] or ""
+
+  local is_docker = result:find("DOCKER_DETECTED") ~= nil
+  if is_docker then
+    self.logger.info("Docker container detected on remote host - will use tarball installation instead of AppImage")
+  end
+
+  return is_docker
 end
 
 ---@private
@@ -630,7 +671,7 @@ function Provider:_setup_remote()
       )
       local local_upload_paths = { local_release_path }
 
-      if self._remote_neovim_install_method == "binary" then
+      if self._remote_neovim_install_method == "binary" or self._remote_neovim_install_method == "tarball" then
         table.insert(local_upload_paths, ("%s.sha256sum"):format(local_release_path))
       end
       self:upload(

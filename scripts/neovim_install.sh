@@ -42,7 +42,7 @@ Options:
   -d       Specify directory for storing Neovim binaries.
            NOTE: Installation would happen in 'nvim-downloads' subdirectory.
   -f       Force installation. Would overwrite any existing installation.
-  -m       Installation method: binary, source, system
+  -m       Installation method: binary, tarball, source, system
   -a       Architecture type of the machine
   -o       Offline mode. Assume release is already downloaded.
   -h       Display this help message and exit.
@@ -126,6 +126,55 @@ function setup_neovim_linux_appimage() {
 	ln -sf "$nvim_version_dir"/usr/bin/nvim "$nvim_binary"
 }
 
+# Install on Linux using tarball
+function setup_neovim_linux_tarball() {
+	local version="$1" arch_type="$2"
+
+	local nvim_release_name
+	local download_url
+	download_url=$(safe_subshell build_tarball_github_uri "$version" "Linux" "$arch_type")
+	nvim_release_name=$(basename "$download_url")
+	local nvim_tarball_temp_path="$temp_dir/$nvim_release_name"
+
+	if [ ! -e "$nvim_version_dir/$nvim_release_name" ]; then
+		error "Expected release to be present at $nvim_version_dir/$nvim_release_name. Aborting..."
+		exit 1
+	fi
+
+	cp "$nvim_version_dir/$nvim_release_name" "$nvim_tarball_temp_path"
+
+	info "Extracting Neovim tarball..."
+	tar -xzf "$nvim_tarball_temp_path" -C "$temp_dir"
+
+	info "Finishing up installing Neovim..."
+	# Determine the extracted directory name based on version
+	local extracted_dir
+	local is_lesser
+	is_lesser_version "$version" v0.10.4
+	is_lesser=$?
+
+	if [[ $is_lesser -eq 0 ]]; then
+		# Older versions extract to nvim-linux64
+		extracted_dir="nvim-linux64"
+	else
+		# Newer versions extract to nvim-linux-<arch>
+		extracted_dir="nvim-linux-${arch_type}"
+	fi
+
+	if [ ! -d "$temp_dir/$extracted_dir" ]; then
+		error "Expected extracted directory $temp_dir/$extracted_dir not found. Aborting..."
+		exit 1
+	fi
+
+	# Move extracted contents to version directory
+	mkdir -p "$nvim_version_dir"
+	mv -f "$temp_dir/$extracted_dir"/* "$nvim_version_dir"
+
+	# Create symlink to the nvim binary
+	mkdir -p "$nvim_version_dir"/bin
+	ln -sf "$nvim_version_dir"/bin/nvim "$nvim_binary"
+}
+
 # Function to download and decompress Neovim binary for macOS
 function setup_neovim_macos() {
 	local version="$1" arch_type="$2"
@@ -190,6 +239,22 @@ function install_neovim() {
 			# Install Neovim based on the detected OS
 			if [[ $os == "Linux" ]]; then
 				safe_subshell setup_neovim_linux_appimage "$nvim_version" "$arch_type"
+			elif [[ $os == "Darwin" ]]; then
+				safe_subshell setup_neovim_macos "$nvim_version" "$arch_type"
+			else
+				echo "Unsupported operating system: $(uname)"
+				exit 1
+			fi
+		elif [[ $install_method == "tarball" ]]; then
+			if [ "$offline_mode" == true ]; then
+				info "Operating in offline mode. Will not download Neovim tarball"
+			else
+				"$download_neovim_script" -o "$os" -v "$nvim_version" -d "$nvim_version_dir" -t "tarball" -a "$arch_type"
+			fi
+
+			# Install Neovim tarball based on the detected OS
+			if [[ $os == "Linux" ]]; then
+				safe_subshell setup_neovim_linux_tarball "$nvim_version" "$arch_type"
 			elif [[ $os == "Darwin" ]]; then
 				safe_subshell setup_neovim_macos "$nvim_version" "$arch_type"
 			else
