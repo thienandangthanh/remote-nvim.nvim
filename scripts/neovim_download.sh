@@ -19,7 +19,7 @@ Options:
   -v       Specify the desired Neovim version to download.
   -d       Specify directory inside which Neovim release should be downloaded.
   -o       OS whose binary is to be downloaded.
-  -t       What to download: 'binary' or 'source'
+  -t       What to download: 'binary', 'tarball' or 'source'
   -a       Specify architecture that should be downloaded.
   -h       Display this help message and exit.
 EOM
@@ -65,6 +65,39 @@ function download_neovim_source() {
 	download_file "$download_url" "$download_path"
 
 	info "Downloaded Neovim source version ${version} to ${download_path}"
+}
+
+# Download Neovim tarball
+function download_neovim_tarball() {
+	local os="$1" version="$2" download_dir="$3" arch_type="$4"
+
+	local download_url
+	local download_path
+	local checksum_path
+	local expected_checksum
+	local actual_checksum
+	download_url=$(safe_subshell build_tarball_github_uri "$version" "$os" "$arch_type")
+	download_path="$download_dir/$(basename "$download_url")"
+
+	checksum_path="$download_path".sha256sum
+	actual_checksum="$expected_checksum-actual" # This ensures that they do not match
+	expected_checksum=$(safe_subshell get_tarball_sha256 "$version" "$os" "$arch_type")
+
+	if [ -e "$download_path" ] && [ -e "$checksum_path" ]; then
+		expected_checksum=$(<"$checksum_path")
+		actual_checksum=$(sha256sum "$download_path" | cut -d ' ' -f 1)
+	fi
+
+	if [ "$actual_checksum" == "$expected_checksum" ]; then
+		info "Existing installation with matching checksum found. Skipping downloading..."
+		return 0
+	fi
+
+	download_file "$download_url" "$download_path"
+	info "Downloaded Neovim tarball ${version} for ${os} (${arch_type}) to ${download_path}"
+
+	# Save checksum for future verification
+	echo "$expected_checksum" >"$checksum_path"
 }
 
 # Parse command-line options
@@ -129,8 +162,10 @@ fi
 
 if [[ $download_type == "source" ]]; then
 	download_neovim_source "$nvim_version" "$download_dir"
+elif [[ $download_type == "tarball" ]]; then
+	download_neovim_tarball "$os_name" "$nvim_version" "$download_dir" "$arch_type"
 elif [[ $download_type == "system" ]]; then
-	error "Cannot download a system-type Neovim release. Choose from either 'source' or 'binary'."
+	error "Cannot download a system-type Neovim release. Choose from 'source', 'binary', or 'tarball'."
 	exit 1
 else
 	download_neovim "$os_name" "$nvim_version" "$download_dir" "$arch_type"
