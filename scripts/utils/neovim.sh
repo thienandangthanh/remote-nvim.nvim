@@ -57,6 +57,23 @@ function _linux_asset_name {
 	echo "$asset_name"
 }
 
+function _linux_tarball_asset_name {
+	# If version is less than 0.10.4, tarball name is nvim-linux64.tar.gz
+	# else it includes architecture: nvim-linux-x86_64.tar.gz or nvim-linux-arm64.tar.gz
+	local version="$1" arch_type="$2"
+	local asset_name="nvim-linux-${arch_type}.tar.gz"
+
+	info "Determining tarball asset name for Neovim version $version on Linux with architecture $arch_type"
+	local is_lesser
+	is_lesser_version "$version" v0.10.4
+	is_lesser=$?
+
+	if [[ $is_lesser -eq 0 ]]; then
+		asset_name="nvim-linux64.tar.gz"
+	fi
+	echo "$asset_name"
+}
+
 function _macos_asset_name {
 	# If version is less than 0.10.0, there is no architecture in the download URL
 	# else it has to be added into the URL suffix.
@@ -89,6 +106,22 @@ function _get_asset_name {
 	echo "$asset_name"
 }
 
+function _get_tarball_asset_name {
+	local version="$1" os="$2" arch_type="$3"
+
+	local asset_name
+	if [[ $os == "Linux" ]]; then
+		asset_name=$(safe_subshell _linux_tarball_asset_name "$version" "$arch_type")
+	elif [[ $os == "Darwin" ]]; then
+		asset_name=$(safe_subshell _macos_asset_name "$version" "$arch_type")
+	else
+		fatal --status=3 "Unsupported OS: $os"
+	fi
+
+	debug "Tarball asset name for ${os} ${arch_type} version ${version}: ${asset_name}"
+	echo "$asset_name"
+}
+
 # Get release download URL based on OS, Arch type and version
 function build_github_uri {
 	local VERSION=$1 OS=$2 ARCH_TYPE=$3
@@ -97,6 +130,18 @@ function build_github_uri {
 
 	local ASSET_NAME
 	ASSET_NAME=$(safe_subshell _get_asset_name "$VERSION" "$OS" "$ARCH_TYPE")
+
+	echo "${BASE_GITHUB_URI_PATH}/${ASSET_NAME}"
+}
+
+# Get tarball download URL based on OS, Arch type and version
+function build_tarball_github_uri {
+	local VERSION=$1 OS=$2 ARCH_TYPE=$3
+
+	local BASE_GITHUB_URI_PATH="https://github.com/neovim/neovim/releases/download/${VERSION}"
+
+	local ASSET_NAME
+	ASSET_NAME=$(safe_subshell _get_tarball_asset_name "$VERSION" "$OS" "$ARCH_TYPE")
 
 	echo "${BASE_GITHUB_URI_PATH}/${ASSET_NAME}"
 }
@@ -123,6 +168,46 @@ function get_sha256 {
 
 	local DOWNLOAD_URI
 	DOWNLOAD_URI=$(safe_subshell build_github_uri "$VERSION" "$OS" "$ARCH_TYPE")
+
+	local is_lesser
+	is_lesser_version "$VERSION" v0.11.3
+	is_lesser=$?
+
+	local SHA256_URI
+	local SHA256_SUM
+	if [[ $is_lesser -eq 0 ]]; then
+		info "Neovim version $VERSION is less than 0.11.3, using legacy checksum file"
+
+		SHA256_URI="${DOWNLOAD_URI}.sha256sum"
+		SHA256_SUM=$(safe_subshell run_api_call "$SHA256_URI")
+
+		SHA256_SUM=$(safe_subshell printf '%s\n' "$SHA256_SUM" | awk '{print $1}')
+	else
+		info "Neovim version $VERSION is greater than or equal to 0.11.3, using GitHub's checksum API"
+
+		SHA256_URI="https://api.github.com/repos/neovim/neovim/releases/tags/${VERSION}"
+		debug "Downloading SHA256 from $SHA256_URI"
+
+		local response
+		response=$(safe_subshell run_api_call "$SHA256_URI")
+		debug "Response from GitHub API: $response"
+
+		SHA256_SUM=$(safe_subshell printf '%s\n' "$response" | _find_sha256_for_version "$DOWNLOAD_URI")
+	fi
+
+	if [[ -z $SHA256_SUM ]]; then
+		fatal --status=3 "Failed to retrieve SHA256 sum for release item $DOWNLOAD_URI"
+	fi
+
+	debug "SHA256 sum: $SHA256_SUM for release item $DOWNLOAD_URI"
+	echo "$SHA256_SUM"
+}
+
+function get_tarball_sha256 {
+	local VERSION=$1 OS=$2 ARCH_TYPE=$3
+
+	local DOWNLOAD_URI
+	DOWNLOAD_URI=$(safe_subshell build_tarball_github_uri "$VERSION" "$OS" "$ARCH_TYPE")
 
 	local is_lesser
 	is_lesser_version "$VERSION" v0.11.3
