@@ -169,10 +169,6 @@ function setup_neovim_linux_tarball() {
 	# Move extracted contents to version directory
 	mkdir -p "$nvim_version_dir"
 	mv -f "$temp_dir/$extracted_dir"/* "$nvim_version_dir"
-
-	# Create symlink to the nvim binary
-	mkdir -p "$nvim_version_dir"/bin
-	ln -sf "$nvim_version_dir"/bin/nvim "$nvim_binary"
 }
 
 # Function to download and decompress Neovim binary for macOS
