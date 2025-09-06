@@ -376,9 +376,10 @@ end
 ---Detect if the remote host is running in a Docker container
 ---@return boolean is_docker True if running in Docker container
 function Provider:_is_remote_docker_container()
-  -- Check multiple indicators of Docker container environment
+  -- Check multiple indicators of container environment
   local docker_checks = {
     "test -f /.dockerenv", -- Standard Docker indicator file
+    "test -f /run/.containerenv", -- Standard Podman indicator file
     'test -n "${container}"', -- Container environment variable
     "grep -q 'docker\\|lxc' /proc/1/cgroup 2>/dev/null", -- Process cgroup check
     "test -f /proc/self/mountinfo && grep -q 'docker' /proc/self/mountinfo 2>/dev/null", -- Mount info check
